@@ -1,9 +1,26 @@
 import asyncio
 import traceback
+import os
+import threading
+from flask import Flask
 from pyrogram import Client, filters, idle
 from pyrogram.errors import FloodWait
 from config import API_ID, API_HASH, BOT_TOKEN
 
+# --- Web server (for Koyeb health check) ---
+web = Flask(__name__)
+
+@web.route("/")
+def home():
+    return "OK", 200
+
+def run_web():
+    port = int(os.environ.get("PORT", 8000))
+    web.run(host="0.0.0.0", port=port)
+
+threading.Thread(target=run_web, daemon=True).start()
+
+# --- Telegram Bot ---
 app = Client(
     "forwarder-bot",
     api_id=API_ID,
@@ -25,7 +42,6 @@ async def forward_messages(src, dest, start, end):
     while current <= end:
         try:
             batch_end = min(current + 50, end)
-
             msgs = await app.get_messages(src, list(range(current, batch_end + 1)))
 
             if not isinstance(msgs, list):
@@ -34,9 +50,8 @@ async def forward_messages(src, dest, start, end):
             for msg in msgs:
                 if not msg or msg.empty:
                     continue
-
                 try:
-                    await msg.copy(dest, caption=caption if caption else None)
+                    await msg.copy(dest, caption=caption or None)
                     success += 1
                     await asyncio.sleep(2)
                 except Exception as e:
@@ -58,9 +73,9 @@ async def forward_messages(src, dest, start, end):
 @app.on_message(filters.command("start"))
 async def start(_, m):
     await m.reply(
-        "**Forwarder Bot Ready ✅**\n\n"
-        "Use:\n`/f chat_id start end`\n\n"
-        "Example:\n`/f -1001234567890 1 50`"
+        "Forwarder Bot Ready ✅\n\n"
+        "Use:\n/f chat_id start end\n\n"
+        "Example:\n/f -1001234567890 1 50"
     )
 
 
@@ -80,7 +95,6 @@ async def forward_handler(_, m):
         return await m.reply("❌ Usage:\n/f chat_id start end")
 
     msg = await m.reply("🚀 Forwarding started...")
-
     success, failed = 0, 0
 
     task = asyncio.create_task(
@@ -89,8 +103,6 @@ async def forward_handler(_, m):
 
     try:
         await task
-    except:
-        pass
     finally:
         task = None
         await msg.edit(f"✅ Done\n\n✔ Success: {success}\n❌ Failed: {failed}")
@@ -101,7 +113,6 @@ async def cancel(_, m):
     global task, success, failed
     if not task:
         return await m.reply("No running task.")
-
     task.cancel()
     task = None
     success, failed = 0, 0
