@@ -7,7 +7,7 @@ from pyrogram import Client, filters, idle
 from pyrogram.errors import FloodWait
 from config import API_ID, API_HASH, BOT_TOKEN
 
-# --- Web server (for Koyeb health check) ---
+# ----------- WEB SERVER (Koyeb Health Check) -----------
 web = Flask(__name__)
 
 @web.route("/")
@@ -18,9 +18,11 @@ def run_web():
     port = int(os.environ.get("PORT", 8000))
     web.run(host="0.0.0.0", port=port)
 
-threading.Thread(target=run_web, daemon=True).start()
+# ⚠️ daemon=False (important)
+threading.Thread(target=run_web).start()
 
-# --- Telegram Bot ---
+
+# ----------- TELEGRAM BOT -----------
 app = Client(
     "forwarder-bot",
     api_id=API_ID,
@@ -42,14 +44,15 @@ async def forward_messages(src, dest, start, end):
     while current <= end:
         try:
             batch_end = min(current + 50, end)
-            msgs = await app.get_messages(src, list(range(current, batch_end + 1)))
 
+            msgs = await app.get_messages(src, list(range(current, batch_end + 1)))
             if not isinstance(msgs, list):
                 msgs = [msgs]
 
             for msg in msgs:
                 if not msg or msg.empty:
                     continue
+
                 try:
                     await msg.copy(dest, caption=caption or None)
                     success += 1
@@ -146,6 +149,7 @@ async def send_logs(_, m):
     await m.reply_document("logs.txt")
 
 
+# ----------- START BOT -----------
 if __name__ == "__main__":
     print("Starting Bot...")
     app.start()
