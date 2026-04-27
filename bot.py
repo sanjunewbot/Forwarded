@@ -267,8 +267,6 @@ async def send_logs(_, m):
 from pyrogram import idle
 
 if __name__ == "__main__":
-    print("Starting Bot...")
     app.start()
     print("Bot Started ✅")
     idle()
-    
