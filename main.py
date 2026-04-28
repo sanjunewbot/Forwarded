@@ -8,7 +8,7 @@ import os
 import threading
 from flask import Flask
 
-# ===== FLASK HEALTH SERVER (for Koyeb) =====
+# ===== FLASK HEALTH SERVER =====
 web = Flask(__name__)
 
 @web.route('/')
@@ -18,7 +18,7 @@ def home():
 def run_web():
     web.run(host='0.0.0.0', port=8000)
 
-threading.Thread(target=run_web).start()
+threading.Thread(target=run_web, daemon=True).start()
 
 
 # ===== BOT INIT =====
@@ -44,11 +44,9 @@ markup = InlineKeyboardMarkup(
     [[InlineKeyboardButton("Progress", callback_data='progress')]]
 )
 
-
 # ===== CHUNK =====
 def chunkify(start, end, size):
     return [list(range(i, min(i + size, end + 1))) for i in range(start, end + 1, size)]
-
 
 # ===== WORKER =====
 async def worker(chat_id: int, fwd_id: int, ids):
@@ -82,7 +80,6 @@ async def worker(chat_id: int, fwd_id: int, ids):
             if len(logs) > LOG_LIMIT:
                 logs.pop(0)
 
-
 # ===== FORWARD =====
 async def forward(chat_id: int, fwd_id: int, st: int, en: int):
     chunks = chunkify(st, en, BATCH_SIZE)
@@ -96,7 +93,6 @@ async def forward(chat_id: int, fwd_id: int, st: int, en: int):
     tasks = [asyncio.create_task(limited_worker(ch)) for ch in chunks]
     await asyncio.gather(*tasks)
 
-
 # ===== CAPTION =====
 @app.on_message(filters.command("caption") & filters.user(SUDO_USERS))
 async def caption_handler(_, m):
@@ -109,13 +105,11 @@ async def caption_handler(_, m):
 
     return await m.reply("No caption set." if not caption else f"Current:\n{caption}")
 
-
 @app.on_message(filters.command("dcaption") & filters.user(SUDO_USERS))
 async def dcaption_handler(_, m):
     global caption
     caption = ''
     await m.reply("Caption removed.")
-
 
 # ===== LOGS =====
 @app.on_message(filters.command("logs") & filters.user(SUDO_USERS))
@@ -129,7 +123,6 @@ async def logs_handler(_, m):
     await m.reply_document("logs.txt")
     os.remove("logs.txt")
 
-
 # ===== CANCEL =====
 @app.on_message(filters.command("cancel") & filters.user(SUDO_USERS))
 async def cancel_handler(_, m):
@@ -142,13 +135,11 @@ async def cancel_handler(_, m):
 
     await m.reply("No active task.")
 
-
 # ===== PROGRESS BUTTON =====
 @app.on_callback_query(filters.regex("progress"))
 async def progress_cb(_, cq):
     total = s + f
     await cq.answer(f"✅ {s} | ❌ {f} | 📦 {total}", show_alert=True)
-
 
 # ===== FORWARD COMMAND =====
 @app.on_message(filters.command('f') & filters.user(SUDO_USERS))
@@ -193,12 +184,14 @@ async def f_handler(_, m):
     finally:
         task = None
 
+# ===== START (FIXED) =====
+async def main():
+    await app.start()
+    print("🚀 Bot Started Successfully")
 
-# ===== START =====
-app.start()
-print("🚀 Bot Started Successfully")
+    # keep alive properly (non-blocking)
+    while True:
+        await asyncio.sleep(10)
 
-# keep bot alive
-import time
-while True:
-    time.sleep(10)
+if __name__ == "__main__":
+    asyncio.run(main())
