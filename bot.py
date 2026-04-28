@@ -25,7 +25,8 @@ threading.Thread(target=run_web).start()
 # ---------------- BOT ----------------
 app = Client("forwarder-bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-ADMINS = [123456789]  # 👈 apna user id dalna
+# 👇 यहाँ अपना REAL Telegram ID डालना है
+ADMINS = [123456789]
 
 task = None
 success = 0
@@ -45,7 +46,12 @@ filters_state = {
 
 # ---------------- ADMIN CHECK ----------------
 def is_admin(user_id):
-    return user_id in ADMINS
+    return user_id and user_id in ADMINS
+
+# ---------------- GET ID ----------------
+@app.on_message(filters.command("id"))
+async def get_id(_, m):
+    await m.reply(f"🆔 Your ID: `{m.from_user.id}`")
 
 # ---------------- FILTER UI ----------------
 def build_buttons():
@@ -57,12 +63,14 @@ def build_buttons():
 
 @app.on_message(filters.command("filter"))
 async def filter_menu(_, m):
-    if not is_admin(m.from_user.id): return
+    if not is_admin(m.from_user.id):
+        return await m.reply("❌ Not allowed")
     await m.reply("📁 Media Filter:", reply_markup=build_buttons())
 
 @app.on_callback_query(filters.regex("toggle_"))
 async def toggle_filter(_, q):
-    if not is_admin(q.from_user.id): return
+    if not is_admin(q.from_user.id):
+        return await q.answer("Not allowed", show_alert=True)
     key = q.data.split("_")[1]
     filters_state[key] = not filters_state[key]
     await q.message.edit_reply_markup(build_buttons())
@@ -72,12 +80,11 @@ async def toggle_filter(_, q):
 @app.on_message(filters.command("speed"))
 async def set_speed(_, m):
     global speed
-    if not is_admin(m.from_user.id): return
+    if not is_admin(m.from_user.id):
+        return await m.reply("❌ Not allowed")
     try:
         val = int(m.text.split()[1])
-        if val < 1 or val > 5:
-            return await m.reply("Use 1-5")
-        speed = {1: 0.5, 2: 1, 3: 2, 4: 3, 5: 4}[val]
+        speed = {1:0.5,2:1,3:2,4:3,5:4}[val]
         await m.reply(f"⚡ Speed set to {val}")
     except:
         await m.reply("Usage: /speed 1-5")
@@ -85,15 +92,13 @@ async def set_speed(_, m):
 # ---------------- PROGRESS BAR ----------------
 def progress_bar(percent):
     bars = int(percent // 5)
-    return "█" * bars + "░" * (20 - bars)
+    return "█"*bars + "░"*(20-bars)
 
 # ---------------- LINK PARSER ----------------
 def extract(link):
     link = link.split("?")[0]
     parts = link.strip().split("/")
-    chat = int("-100" + parts[-2])
-    msg_id = int(parts[-1])
-    return chat, msg_id
+    return int("-100"+parts[-2]), int(parts[-1])
 
 # ---------------- FORWARD ----------------
 async def forward_messages(src, dest, start, end, status_msg, user_caption):
@@ -106,9 +111,7 @@ async def forward_messages(src, dest, start, end, status_msg, user_caption):
 
     while current <= end:
         try:
-            batch_end = min(current + 50, end)
-            msgs = await app.get_messages(src, list(range(current, batch_end + 1)))
-
+            msgs = await app.get_messages(src, list(range(current, min(current+50,end)+1)))
             if not isinstance(msgs, list):
                 msgs = [msgs]
 
@@ -116,23 +119,10 @@ async def forward_messages(src, dest, start, end, status_msg, user_caption):
                 if not msg or msg.empty:
                     continue
 
-                # FILTERS
-                if msg.text and not filters_state["text"]: continue
-                if msg.photo and not filters_state["photo"]: continue
-                if msg.video and not filters_state["video"]: continue
-                if msg.audio and not filters_state["audio"]: continue
-                if msg.document and not filters_state["document"]: continue
-                if msg.voice and not filters_state["voice"]: continue
-                if msg.animation and not filters_state["animation"]: continue
-
                 try:
-                    final_caption = ""
-
-                    if msg.caption:
-                        final_caption += msg.caption + "\n\n"
-
+                    final_caption = (msg.caption or "")
                     if user_caption:
-                        final_caption += user_caption
+                        final_caption += "\n\n" + user_caption
 
                     await msg.copy(dest, caption=final_caption or None)
                     success += 1
@@ -142,40 +132,25 @@ async def forward_messages(src, dest, start, end, status_msg, user_caption):
 
                 processed += 1
 
-                # ETA
-                elapsed = time.time() - start_time
-                rate = processed / elapsed if elapsed > 0 else 0
-                remaining = total - processed
-                eta = int(remaining / rate) if rate > 0 else 0
-
-                # PROGRESS UPDATE
                 if processed % 10 == 0:
-                    percent = (processed / total) * 100
+                    percent = (processed/total)*100
                     bar = progress_bar(percent)
+                    elapsed = time.time()-start_time
+                    eta = int((total-processed)/(processed/elapsed)) if processed else 0
 
-                    try:
-                        await status_msg.edit(
-                            f"📊 Progress\n\n"
-                            f"[{bar}] {percent:.1f}%\n\n"
-                            f"✔ {success} | ❌ {failed}\n"
-                            f"{processed}/{total}\n\n"
-                            f"⏱️ ETA: {eta}s\n"
-                            f"⚡ Speed: {speed}s/msg"
-                        )
-                    except:
-                        pass
+                    await status_msg.edit(
+                        f"📊 Progress\n\n[{bar}] {percent:.1f}%\n"
+                        f"{processed}/{total}\n"
+                        f"✔ {success} ❌ {failed}\n\n"
+                        f"⏱️ ETA: {eta}s\n⚡ {speed}s/msg"
+                    )
 
                 await asyncio.sleep(speed)
 
-            current = batch_end + 1
+            current += 50
 
         except FloodWait as e:
-            wait = int(getattr(e, "value", 30))
-            await asyncio.sleep(wait)
-
-        except Exception:
-            failed += 1
-            logs.append(traceback.format_exc())
+            await asyncio.sleep(int(getattr(e,"value",30)))
 
 # ---------------- COMMAND ----------------
 @app.on_message(filters.command("forward"))
@@ -185,48 +160,26 @@ async def forward_handler(_, m):
     if not is_admin(m.from_user.id):
         return await m.reply("❌ Not allowed")
 
-    if task and not task.done():
-        return await m.reply("Task already running")
-
     try:
-        parts = m.text.split("|", 1)
-        main = parts[0].strip().split()
-        caption_text = parts[1].strip() if len(parts) > 1 else ""
+        parts = m.text.split("|",1)
+        main = parts[0].split()
+        caption = parts[1].strip() if len(parts)>1 else ""
 
-        _, dest, start_link, end_link = main
-
+        _, dest, s_link, e_link = main
         dest = int(dest)
-        src_chat, start_id = extract(start_link)
-        src2, end_id = extract(end_link)
 
-        if src_chat != src2:
-            return await m.reply("Source mismatch")
-
-        if start_id > end_id:
-            start_id, end_id = end_id, start_id
+        src, start = extract(s_link)
+        _, end = extract(e_link)
 
     except:
-        return await m.reply(
-            "Usage:\n/forward dest start_link end_link | caption"
-        )
+        return await m.reply("Usage:\n/forward dest start end | caption")
 
-    # access check
-    test = await app.get_messages(src_chat, start_id)
-    if not test or test.empty:
-        return await m.reply("❌ Cannot access source chat")
+    msg = await m.reply("🚀 Started...")
+    success = failed = 0
 
-    msg = await m.reply("🚀 Forwarding started...")
-    success, failed = 0, 0
+    await forward_messages(src,dest,start,end,msg,caption)
 
-    task = asyncio.create_task(
-        forward_messages(src_chat, dest, start_id, end_id, msg, caption_text)
-    )
-
-    try:
-        await task
-    finally:
-        task = None
-        await msg.edit(f"✅ Done\n\n✔ {success}\n❌ {failed}")
+    await msg.edit(f"✅ Done\n✔ {success}\n❌ {failed}")
 
 # ---------------- START ----------------
 if __name__ == "__main__":
