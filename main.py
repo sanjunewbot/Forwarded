@@ -5,8 +5,23 @@ from config import BOT_TOKEN, SUDO_USERS
 import asyncio
 import traceback
 import os
-from DA_Koyeb.health import emit_positive_health
+import threading
+from flask import Flask
 
+# ===== FLASK HEALTH SERVER (for Koyeb) =====
+web = Flask(__name__)
+
+@web.route('/')
+def home():
+    return "Bot is running"
+
+def run_web():
+    web.run(host='0.0.0.0', port=8000)
+
+threading.Thread(target=run_web).start()
+
+
+# ===== BOT INIT =====
 app = Client("FORWARDER", use_default_api=True, bot_token=BOT_TOKEN)
 
 logs = []
@@ -25,10 +40,12 @@ BATCH_SIZE = 15
 
 LOG_LIMIT = 1000
 
-markup = InlineKeyboardMarkup([[InlineKeyboardButton("Progress", callback_data='progress')]])
+markup = InlineKeyboardMarkup(
+    [[InlineKeyboardButton("Progress", callback_data='progress')]]
+)
 
 
-# ===== CHUNK SYSTEM =====
+# ===== CHUNK =====
 def chunkify(start, end, size):
     return [list(range(i, min(i + size, end + 1))) for i in range(start, end + 1, size)]
 
@@ -42,8 +59,6 @@ async def worker(chat_id: int, fwd_id: int, ids):
             await app.copy_message(fwd_id, chat_id, msg_id, caption=caption or None)
 
             s += 1
-
-            # adaptive speed (faster on success)
             current_delay = max(FAST_DELAY, current_delay - 0.03)
 
             await asyncio.sleep(current_delay)
@@ -52,7 +67,7 @@ async def worker(chat_id: int, fwd_id: int, ids):
             wait_time = int(getattr(e, "value", 30))
             current_delay = min(SLOW_DELAY, current_delay + 0.3)
 
-            logs.append(f"FloodWait: sleeping {wait_time}s")
+            logs.append(f"FloodWait: {wait_time}s")
             if len(logs) > LOG_LIMIT:
                 logs.pop(0)
 
@@ -68,13 +83,10 @@ async def worker(chat_id: int, fwd_id: int, ids):
                 logs.pop(0)
 
 
-# ===== MAIN FORWARD =====
+# ===== FORWARD =====
 async def forward(chat_id: int, fwd_id: int, st: int, en: int):
-    global s, f
-
     chunks = chunkify(st, en, BATCH_SIZE)
 
-    # limit workers
     sem = asyncio.Semaphore(WORKERS)
 
     async def limited_worker(ids):
@@ -82,7 +94,6 @@ async def forward(chat_id: int, fwd_id: int, st: int, en: int):
             await worker(chat_id, fwd_id, ids)
 
     tasks = [asyncio.create_task(limited_worker(ch)) for ch in chunks]
-
     await asyncio.gather(*tasks)
 
 
@@ -90,13 +101,13 @@ async def forward(chat_id: int, fwd_id: int, st: int, en: int):
 @app.on_message(filters.command("caption") & filters.user(SUDO_USERS))
 async def caption_handler(_, m):
     global caption
-
     parts = m.text.split(maxsplit=1)
+
     if len(parts) > 1:
         caption = parts[1]
         return await m.reply(f"Caption set:\n{caption}")
 
-    return await m.reply("No caption provided." if not caption else f"Current:\n{caption}")
+    return await m.reply("No caption set." if not caption else f"Current:\n{caption}")
 
 
 @app.on_message(filters.command("dcaption") & filters.user(SUDO_USERS))
@@ -112,8 +123,8 @@ async def logs_handler(_, m):
     if not logs:
         return await m.reply("No Logs Stored.")
 
-    with open("logs.txt", "w") as e:
-        e.write("\n\n".join(logs))
+    with open("logs.txt", "w") as f_:
+        f_.write("\n\n".join(logs))
 
     await m.reply_document("logs.txt")
     os.remove("logs.txt")
@@ -139,17 +150,18 @@ async def progress_cb(_, cq):
     await cq.answer(f"✅ {s} | ❌ {f} | 📦 {total}", show_alert=True)
 
 
-# ===== COMMAND =====
+# ===== FORWARD COMMAND =====
 @app.on_message(filters.command('f') & filters.user(SUDO_USERS))
 async def f_handler(_, m):
     global task, s, f, current_delay
 
     if task and not task.done():
-        return await m.reply("A process is already running. Use /cancel first.")
+        return await m.reply("Already running. Use /cancel first.")
 
     try:
         spl = m.text.split()
         fwd_id = int(spl[1])
+
         chat_id, st_id = spl[2].split('/')[-2:]
         en_id = spl[3].split('/')[-1]
 
@@ -184,6 +196,5 @@ async def f_handler(_, m):
 
 # ===== START =====
 app.start()
-emit_positive_health()
 print("🚀 Bot Started Successfully")
 app.idle()
