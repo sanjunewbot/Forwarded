@@ -1,7 +1,2 @@
-import os
-
-API_ID = int(os.getenv("API_ID", "0"))
-API_HASH = os.getenv("API_HASH", "")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-
-ADMINS = list(map(int, os.getenv("ADMINS", "").split()))
+SUDO_USERS: list = [6803963354, 5903688119]
+BOT_TOKEN = '8626002432:AAFz4QG5D8IXRoJL5X4KJxLRWlgfx9jLutE'
