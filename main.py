@@ -197,4 +197,8 @@ async def f_handler(_, m):
 # ===== START =====
 app.start()
 print("🚀 Bot Started Successfully")
-app.idle()
+
+# keep bot alive
+import time
+while True:
+    time.sleep(10)
