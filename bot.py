@@ -25,13 +25,14 @@ threading.Thread(target=run_web).start()
 # ---------------- BOT ----------------
 app = Client("forwarder-bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# 👇 यहाँ अपना REAL Telegram ID डालना है
-ADMINS = [123456789]
+# 🔥 100% FIX ADMIN SYSTEM
+# पहले ENV से लेगा, नहीं तो fallback use करेगा
+ADMIN_ENV = os.getenv("ADMINS", "")
+ADMINS = list(map(int, ADMIN_ENV.split())) if ADMIN_ENV else [123456789]  # 👈 replace fallback
 
 task = None
 success = 0
 failed = 0
-logs = []
 speed = 2
 
 filters_state = {
@@ -46,20 +47,19 @@ filters_state = {
 
 # ---------------- ADMIN CHECK ----------------
 def is_admin(user_id):
-    return user_id and user_id in ADMINS
+    return user_id in ADMINS
 
-# ---------------- GET ID ----------------
-@app.on_message(filters.command("id"))
-async def get_id(_, m):
-    await m.reply(f"🆔 Your ID: `{m.from_user.id}`")
+# ---------------- DEBUG COMMAND ----------------
+@app.on_message(filters.command("check"))
+async def check(_, m):
+    await m.reply(f"Your ID: {m.from_user.id}\nAdmins: {ADMINS}")
 
 # ---------------- FILTER UI ----------------
 def build_buttons():
-    btns = []
-    for k, v in filters_state.items():
-        status = "✅" if v else "❌"
-        btns.append([InlineKeyboardButton(f"{k.upper()} {status}", callback_data=f"toggle_{k}")])
-    return InlineKeyboardMarkup(btns)
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"{k.upper()} {'✅' if v else '❌'}", callback_data=f"t_{k}")]
+        for k, v in filters_state.items()
+    ])
 
 @app.on_message(filters.command("filter"))
 async def filter_menu(_, m):
@@ -67,14 +67,13 @@ async def filter_menu(_, m):
         return await m.reply("❌ Not allowed")
     await m.reply("📁 Media Filter:", reply_markup=build_buttons())
 
-@app.on_callback_query(filters.regex("toggle_"))
-async def toggle_filter(_, q):
+@app.on_callback_query(filters.regex("^t_"))
+async def toggle(_, q):
     if not is_admin(q.from_user.id):
         return await q.answer("Not allowed", show_alert=True)
     key = q.data.split("_")[1]
     filters_state[key] = not filters_state[key]
     await q.message.edit_reply_markup(build_buttons())
-    await q.answer(f"{key} {'Enabled' if filters_state[key] else 'Disabled'}")
 
 # ---------------- SPEED ----------------
 @app.on_message(filters.command("speed"))
@@ -85,14 +84,9 @@ async def set_speed(_, m):
     try:
         val = int(m.text.split()[1])
         speed = {1:0.5,2:1,3:2,4:3,5:4}[val]
-        await m.reply(f"⚡ Speed set to {val}")
+        await m.reply(f"⚡ Speed {val}")
     except:
         await m.reply("Usage: /speed 1-5")
-
-# ---------------- PROGRESS BAR ----------------
-def progress_bar(percent):
-    bars = int(percent // 5)
-    return "█"*bars + "░"*(20-bars)
 
 # ---------------- LINK PARSER ----------------
 def extract(link):
@@ -100,62 +94,59 @@ def extract(link):
     parts = link.strip().split("/")
     return int("-100"+parts[-2]), int(parts[-1])
 
+# ---------------- PROGRESS BAR ----------------
+def bar(p):
+    return "█"*int(p//5)+"░"*(20-int(p//5))
+
 # ---------------- FORWARD ----------------
-async def forward_messages(src, dest, start, end, status_msg, user_caption):
-    global success, failed, speed
+async def forward_messages(src, dest, start, end, msg, cap):
+    global success, failed
 
     total = end - start + 1
-    processed = 0
+    done = 0
     start_time = time.time()
-    current = start
 
-    while current <= end:
+    for i in range(start, end+1):
         try:
-            msgs = await app.get_messages(src, list(range(current, min(current+50,end)+1)))
-            if not isinstance(msgs, list):
-                msgs = [msgs]
+            m = await app.get_messages(src, i)
+            if not m or m.empty:
+                continue
 
-            for msg in msgs:
-                if not msg or msg.empty:
-                    continue
+            if m.text and not filters_state["text"]: continue
+            if m.photo and not filters_state["photo"]: continue
+            if m.video and not filters_state["video"]: continue
+            if m.audio and not filters_state["audio"]: continue
+            if m.document and not filters_state["document"]: continue
+            if m.voice and not filters_state["voice"]: continue
+            if m.animation and not filters_state["animation"]: continue
 
-                try:
-                    final_caption = (msg.caption or "")
-                    if user_caption:
-                        final_caption += "\n\n" + user_caption
+            final = (m.caption or "")
+            if cap:
+                final += "\n\n"+cap
 
-                    await msg.copy(dest, caption=final_caption or None)
-                    success += 1
-                except Exception as e:
-                    failed += 1
-                    logs.append(str(e))
+            await m.copy(dest, caption=final or None)
+            success += 1
 
-                processed += 1
+        except Exception:
+            failed += 1
 
-                if processed % 10 == 0:
-                    percent = (processed/total)*100
-                    bar = progress_bar(percent)
-                    elapsed = time.time()-start_time
-                    eta = int((total-processed)/(processed/elapsed)) if processed else 0
+        done += 1
 
-                    await status_msg.edit(
-                        f"📊 Progress\n\n[{bar}] {percent:.1f}%\n"
-                        f"{processed}/{total}\n"
-                        f"✔ {success} ❌ {failed}\n\n"
-                        f"⏱️ ETA: {eta}s\n⚡ {speed}s/msg"
-                    )
+        if done % 10 == 0:
+            p = (done/total)*100
+            eta = int((total-done)/((done)/(time.time()-start_time))) if done else 0
+            await msg.edit(
+                f"📊 [{bar(p)}] {p:.1f}%\n"
+                f"{done}/{total}\n✔ {success} ❌ {failed}\n"
+                f"⏱️ {eta}s"
+            )
 
-                await asyncio.sleep(speed)
-
-            current += 50
-
-        except FloodWait as e:
-            await asyncio.sleep(int(getattr(e,"value",30)))
+        await asyncio.sleep(speed)
 
 # ---------------- COMMAND ----------------
 @app.on_message(filters.command("forward"))
-async def forward_handler(_, m):
-    global task, success, failed
+async def forward(_, m):
+    global success, failed
 
     if not is_admin(m.from_user.id):
         return await m.reply("❌ Not allowed")
@@ -163,27 +154,26 @@ async def forward_handler(_, m):
     try:
         parts = m.text.split("|",1)
         main = parts[0].split()
-        caption = parts[1].strip() if len(parts)>1 else ""
+        cap = parts[1].strip() if len(parts)>1 else ""
 
-        _, dest, s_link, e_link = main
+        _, dest, l1, l2 = main
         dest = int(dest)
 
-        src, start = extract(s_link)
-        _, end = extract(e_link)
+        src, s = extract(l1)
+        _, e = extract(l2)
 
     except:
-        return await m.reply("Usage:\n/forward dest start end | caption")
+        return await m.reply("Usage:\n/forward dest link link | caption")
 
-    msg = await m.reply("🚀 Started...")
+    msg = await m.reply("🚀 Started")
     success = failed = 0
 
-    await forward_messages(src,dest,start,end,msg,caption)
+    await forward_messages(src, dest, s, e, msg, cap)
 
     await msg.edit(f"✅ Done\n✔ {success}\n❌ {failed}")
 
 # ---------------- START ----------------
 if __name__ == "__main__":
-    print("Starting Bot...")
+    print("Bot Started")
     app.start()
-    print("Bot Started ✅")
     idle()
